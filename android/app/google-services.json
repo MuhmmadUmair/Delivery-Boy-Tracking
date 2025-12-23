@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "343926356922",
+    "project_id": "signin-with-apple-802be",
+    "storage_bucket": "signin-with-apple-802be.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:343926356922:android:dd69b7483e3c1d09de7b83",
+        "android_client_info": {
+          "package_name": "com.example.firebase_google_apple_notif"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "343926356922-gh7nicvrk7i76i4ij2sehr74s856ak39.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.firebase_google_apple_notif",
+            "certificate_hash": "88dd38fc4052bffa4ff47706a901007505fa2994"
+          }
+        },
+        {
+          "client_id": "343926356922-claa3r635q4trrh0esjousuldie52fsn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfhG6zGfdR5Cf1mVaPSyln1wC_q8kHEoA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "343926356922-claa3r635q4trrh0esjousuldie52fsn.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
