@@ -4,7 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_google_apple_notif/gen/assets.gen.dart';
 import 'dart:ui' as ui;
+import 'dart:developer';
 import 'package:flutter/services.dart';
+import 'dart:async';
 
 class TrackDeliveryBoysScreen extends StatefulWidget {
   const TrackDeliveryBoysScreen({super.key});
@@ -23,6 +25,7 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
   GoogleMapController? _mapController;
   BitmapDescriptor? _markerIcon;
   String? _mapStyle;
+
   final DatabaseReference rtdbRef = FirebaseDatabase.instance.ref(
     'delivery_boys',
   );
@@ -33,12 +36,24 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
   String _selectedStatus = 'All';
   final List<String> _filters = ['All', 'Moving', 'Idle', 'Offline'];
 
+  StreamSubscription<DocumentSnapshot>? _managerSub;
+  StreamSubscription<DatabaseEvent>? _rtdbSub;
+  StreamSubscription<QuerySnapshot>? _boysSub;
+
   @override
   void initState() {
     super.initState();
     _loadMarker();
     _loadMapStyle();
     _listenDeliveryBoys();
+  }
+
+  @override
+  void dispose() {
+    _managerSub?.cancel();
+    _rtdbSub?.cancel();
+    _boysSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadMapStyle() async {
@@ -56,11 +71,11 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
       format: ui.ImageByteFormat.png,
     ))!.buffer.asUint8List();
     _markerIcon = BitmapDescriptor.fromBytes(bytes);
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   void _listenDeliveryBoys() {
-    FirebaseFirestore.instance
+    _managerSub = FirebaseFirestore.instance
         .collection('managers')
         .doc(managerUid)
         .snapshots()
@@ -68,14 +83,20 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
           final deliveryBoyIds = List<String>.from(
             managerSnap.data()?['deliveryBoys'] ?? [],
           );
-          if (deliveryBoyIds.isEmpty) return setState(() => _deliveryBoys = []);
 
-          rtdbRef.onValue.listen((rtdbSnap) {
+          if (deliveryBoyIds.isEmpty) {
+            if (mounted) setState(() => _deliveryBoys = []);
+            return;
+          }
+
+          // Listen RTDB changes
+          _rtdbSub = rtdbRef.onValue.listen((rtdbSnap) {
             final rtdbData = rtdbSnap.snapshot.value != null
                 ? Map<String, dynamic>.from(rtdbSnap.snapshot.value as Map)
                 : {};
 
-            FirebaseFirestore.instance
+            // Listen Firestore delivery boys
+            _boysSub = FirebaseFirestore.instance
                 .collection('delivery_boys')
                 .where('uid', whereIn: deliveryBoyIds)
                 .snapshots()
@@ -109,29 +130,32 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
                     };
                   }).toList();
 
-                  setState(() => _deliveryBoys = boys);
+                  if (mounted) setState(() => _deliveryBoys = boys);
                 });
           });
         });
   }
 
-  String _getRealTimeStatus(Map<String, dynamic> d) {
-    final status = (d['status'] ?? 'offline').toString().toLowerCase();
-    final lastUpdate = d['lastStatusUpdate'] as DateTime?;
-    if (lastUpdate == null) return 'offline';
-    return DateTime.now().difference(lastUpdate).inSeconds > 60
-        ? 'offline'
-        : status;
-  }
-
   Set<Marker> _buildMarkers() {
-    return _deliveryBoys
-        // .where((d) {
-        // final status = _getRealTimeStatus(d);
-        // return (status == 'moving' || status == 'idle') &&
-        //       d['lastLocation'] != null;
-        // })
+    final now = DateTime.now();
+
+    final markers = _deliveryBoys
         .where((d) => d['lastLocation'] != null)
+        .where((d) {
+          final lastUpdate = d['lastStatusUpdate'] as DateTime?;
+          final status = d['status']?.toString().toLowerCase() ?? 'offline';
+
+          if (lastUpdate == null) {
+            return false;
+          }
+          if (now.difference(lastUpdate).inSeconds > 60) {
+            return false;
+          }
+          if (status == 'offline') {
+            return false;
+          }
+          return true;
+        })
         .map((d) {
           final loc = d['lastLocation'];
           return Marker(
@@ -142,57 +166,61 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
           );
         })
         .toSet();
+    return markers;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
-        children: [
-          GoogleMap(
-            initialCameraPosition: TrackDeliveryBoysScreen.initialPosition,
-            markers: _buildMarkers(),
-            zoomControlsEnabled: false,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            compassEnabled: false,
-            onMapCreated: (controller) {
-              _mapController = controller;
-              if (_mapStyle != null) controller.setMapStyle(_mapStyle);
-            },
-          ),
-          Positioned(
-            top: 20,
-            left: 16,
-            right: 16,
-            child: Column(
-              children: [
-                _searchBar(),
-                const SizedBox(height: 10),
-                _filterChips(),
-              ],
+      body: SafeArea(
+        child: Stack(
+          children: [
+            GoogleMap(
+              initialCameraPosition: TrackDeliveryBoysScreen.initialPosition,
+              markers: _buildMarkers(),
+              zoomControlsEnabled: false,
+              myLocationEnabled: true,
+              myLocationButtonEnabled: false,
+              compassEnabled: false,
+              mapToolbarEnabled: false,
+              onMapCreated: (controller) {
+                _mapController = controller;
+                if (_mapStyle != null) controller.setMapStyle(_mapStyle);
+              },
             ),
-          ),
-          Positioned(
-            bottom: 20,
-            left: 16,
-            right: 16,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xff192233),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
+            Positioned(
+              top: 20,
+              left: 16,
+              right: 16,
+              child: Column(
+                children: [
+                  _searchBar(),
+                  const SizedBox(height: 10),
+                  _filterChips(),
+                ],
+              ),
+            ),
+            Positioned(
+              bottom: 20,
+              left: 16,
+              right: 16,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xff192233),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                ),
+                onPressed: _openBottomSheet,
+                child: const Text(
+                  'Fleet Overview',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
-              onPressed: _openBottomSheet,
-              child: const Text(
-                'Fleet Overview',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -270,6 +298,52 @@ class FleetBottomSheet extends StatelessWidget {
     return (d['status'] ?? 'offline').toLowerCase();
   }
 
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'moving':
+        return Colors.green;
+      case 'idle':
+        return Colors.amber;
+      case 'offline':
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Widget _statCard(String title, String value) {
+    return Flexible(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xff101622).withOpacity(0.5),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Column(
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 10,
+                color: Colors.grey,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 18,
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtered = deliveryBoys.where((d) {
@@ -279,6 +353,12 @@ class FleetBottomSheet extends StatelessWidget {
       if (selectedStatus == 'All') return nameMatch;
       return nameMatch && _getStatus(d) == selectedStatus.toLowerCase();
     }).toList();
+
+    final activeCount = deliveryBoys
+        .where((d) => _getStatus(d) == 'moving')
+        .length;
+    final idleCount = deliveryBoys.where((d) => _getStatus(d) == 'idle').length;
+    final totalDistance = 450; // Example static distance
 
     return DraggableScrollableSheet(
       expand: false,
@@ -301,6 +381,53 @@ class FleetBottomSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            // Fleet Title Row
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Fleet Overview',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'Live',
+                    style: TextStyle(
+                      color: Colors.blue,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Stats Row
+            Row(
+              children: [
+                _statCard('Active Riders', activeCount.toString()),
+                const SizedBox(width: 8),
+                _statCard('Idle', idleCount.toString()),
+                const SizedBox(width: 8),
+                _statCard('Distance', '${totalDistance} km'),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Rider Cards
             SizedBox(
               height: 100,
               child: ListView.separated(
@@ -310,6 +437,7 @@ class FleetBottomSheet extends StatelessWidget {
                 itemBuilder: (_, i) {
                   final d = filtered[i];
                   final status = _getStatus(d);
+
                   return Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -320,11 +448,15 @@ class FleetBottomSheet extends StatelessWidget {
                             width: 56,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              image: const DecorationImage(
+                              image: DecorationImage(
                                 image: NetworkImage(
-                                  'https://i.pravatar.cc/150',
+                                  d['imageUrl'] ?? 'https://i.pravatar.cc/150',
                                 ),
                                 fit: BoxFit.cover,
+                              ),
+                              border: Border.all(
+                                color: _statusColor(status).withOpacity(0.5),
+                                width: 2,
                               ),
                             ),
                           ),
@@ -336,11 +468,7 @@ class FleetBottomSheet extends StatelessWidget {
                               width: 14,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: status == 'moving'
-                                    ? Colors.green
-                                    : status == 'idle'
-                                    ? Colors.orange
-                                    : Colors.grey,
+                                color: _statusColor(status),
                                 border: Border.all(
                                   color: const Color(0xff192233),
                                   width: 2,
@@ -362,11 +490,7 @@ class FleetBottomSheet extends StatelessWidget {
                       Text(
                         status.toUpperCase(),
                         style: TextStyle(
-                          color: status == 'moving'
-                              ? Colors.green
-                              : status == 'idle'
-                              ? Colors.orange
-                              : Colors.grey,
+                          color: _statusColor(status),
                           fontSize: 10,
                         ),
                       ),

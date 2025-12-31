@@ -16,7 +16,6 @@ import 'package:firebase_google_apple_notif/view/auth/manager/signup_screen.dart
 import 'package:firebase_google_apple_notif/view/auth/user/signup_screen.dart';
 
 class AuthService {
-  // ---------------- Firebase Instances ----------------
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseDatabase _realtimeDB = FirebaseDatabase.instance;
@@ -26,9 +25,7 @@ class AuthService {
 
   String? get currentUserId => _auth.currentUser?.uid;
 
-  // ===================================================
-  // CREATE ACCOUNT
-  // ===================================================
+  // ---------------- CREATE ACCOUNT ----------------
   Future<ApiResponse<User>> createAccount({
     required String email,
     required String password,
@@ -68,9 +65,7 @@ class AuthService {
     }
   }
 
-  // ===================================================
-  // MANAGER CREATION
-  // ===================================================
+  // ---------------- MANAGER CREATION ----------------
   Future<void> _createManager({
     required String uid,
     required String name,
@@ -89,9 +84,7 @@ class AuthService {
     });
   }
 
-  // ===================================================
-  // DELIVERY BOY CREATION
-  // ===================================================
+  // ---------------- DELIVERY BOY CREATION ----------------
   Future<void> _createDeliveryBoy({
     required String uid,
     required String name,
@@ -119,13 +112,14 @@ class AuthService {
       'location': location ?? {'lat': 0.0, 'lng': 0.0},
       'lastUpdated': ServerValue.timestamp,
     });
+    log('Delivery boy created: $uid');
 
+    // server detects disconnect (app killed or internet loss)
     await ref.child('status').onDisconnect().set('offline');
+    await ref.child('lastUpdated').onDisconnect().set(ServerValue.timestamp);
   }
 
-  // ===================================================
-  // STATUS & HEARTBEAT
-  // ===================================================
+  // ---------------- STATUS & HEARTBEAT ----------------
   Future<void> _setOnlineAndStartHeartbeat(String uid) async {
     await setDeliveryBoyStatus(uid, 'idle');
     _startHeartbeat(uid);
@@ -136,8 +130,10 @@ class AuthService {
     final ref = _realtimeDB.ref('delivery_boys/$uid');
     await ref.update({'status': status, 'lastUpdated': ServerValue.timestamp});
 
+    // ensure server sets offline on disconnect
     if (status != 'offline') {
       await ref.child('status').onDisconnect().set('offline');
+      await ref.child('lastUpdated').onDisconnect().set(ServerValue.timestamp);
     }
   }
 
@@ -151,7 +147,6 @@ class AuthService {
         _heartbeatTimer?.cancel();
         return;
       }
-
       await ref.update({'lastUpdated': ServerValue.timestamp});
     });
   }
@@ -166,27 +161,21 @@ class AuthService {
 
   Future<void> updateDeliveryBoyLocation(String uid, Position position) async {
     final ref = _realtimeDB.ref('delivery_boys/$uid/location');
-
     await ref.set({
       'lat': position.latitude,
       'lng': position.longitude,
       'timestamp': ServerValue.timestamp,
     });
-
     await setDeliveryBoyStatus(uid, 'moving');
   }
 
-  // ===================================================
-  // GOOGLE SIGN IN
-  // ===================================================
+  // ---------------- GOOGLE SIGN IN ----------------
   Future<ApiResponse<User>> signInWithGoogle({
     required UserType profileType,
   }) async {
     try {
       final googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) {
-        return ApiResponse.error('Sign in cancelled');
-      }
+      if (googleUser == null) return ApiResponse.error('Sign in cancelled');
 
       final googleAuth = await googleUser.authentication;
 
@@ -204,21 +193,23 @@ class AuthService {
       final docRef = _firestore.collection(collection).doc(result.user!.uid);
 
       if (!(await docRef.get()).exists) {
-        profileType == UserType.manager
-            ? await _createManager(
-                uid: result.user!.uid,
-                name: result.user!.displayName ?? '',
-                email: result.user!.email ?? '',
-                phone: '',
-                address: '',
-              )
-            : await _createDeliveryBoy(
-                uid: result.user!.uid,
-                name: result.user!.displayName ?? '',
-                email: result.user!.email ?? '',
-                phone: '',
-                address: '',
-              );
+        if (profileType == UserType.manager) {
+          await _createManager(
+            uid: result.user!.uid,
+            name: result.user!.displayName ?? '',
+            email: result.user!.email ?? '',
+            phone: '',
+            address: '',
+          );
+        } else {
+          await _createDeliveryBoy(
+            uid: result.user!.uid,
+            name: result.user!.displayName ?? '',
+            email: result.user!.email ?? '',
+            phone: '',
+            address: '',
+          );
+        }
       }
 
       if (profileType == UserType.delivery) {
@@ -231,9 +222,7 @@ class AuthService {
     }
   }
 
-  // ===================================================
-  // EMAIL SIGN IN
-  // ===================================================
+  // ---------------- EMAIL SIGN IN ----------------
   Future<ApiResponse<User>> signInWithEmail({
     required String email,
     required String password,
@@ -269,9 +258,7 @@ class AuthService {
     }
   }
 
-  // ===================================================
-  // SIGN OUT
-  // ===================================================
+  // ---------------- SIGN OUT ----------------
   Future<ApiResponse<void>> signOut() async {
     try {
       final uid = _auth.currentUser?.uid;
@@ -291,9 +278,7 @@ class AuthService {
     }
   }
 
-  // ===================================================
-  // LINK DELIVERY BOY
-  // ===================================================
+  // ---------------- LINK DELIVERY BOY ----------------
   Future<ApiResponse<void>> linkDeliveryBoyToManager({
     required String managerId,
     required String deliveryCode,
@@ -305,15 +290,12 @@ class AuthService {
           .limit(1)
           .get();
 
-      if (query.docs.isEmpty) {
-        return ApiResponse.error('Invalid delivery code');
-      }
+      if (query.docs.isEmpty) return ApiResponse.error('Invalid delivery code');
 
       final deliveryDoc = query.docs.first;
 
-      if (deliveryDoc['managerId'] != null) {
+      if (deliveryDoc['managerId'] != null)
         return ApiResponse.error('Already linked');
-      }
 
       final batch = _firestore.batch();
       batch.update(deliveryDoc.reference, {'managerId': managerId});
@@ -328,9 +310,7 @@ class AuthService {
     }
   }
 
-  // ===================================================
-  // HELPERS
-  // ===================================================
+  // ---------------- HELPERS ----------------
   String _generateDeliveryCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     final rand = Random();
@@ -353,14 +333,11 @@ class AuthService {
     return e.toString();
   }
 
-  // ===================================================
-  // NAVIGATION
-  // ===================================================
+  // ---------------- NAVIGATION ----------------
   static void gotoSignup(BuildContext context, UserType profileType) {
     final page = profileType == UserType.manager
         ? const ManagerSignupScreen()
         : const DeliverySignupScreen();
-
     Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   }
 }
