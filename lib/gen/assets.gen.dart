@@ -24,6 +24,12 @@ class $SecretsGen {
 class $AssetsIconsGen {
   const $AssetsIconsGen();
 
+  /// File path: assets/icons/apple_logo.svg
+  String get appleLogo => 'assets/icons/apple_logo.svg';
+
+  /// File path: assets/icons/google_icon.svg
+  String get googleIcon => 'assets/icons/google_icon.svg';
+
   /// File path: assets/icons/profile.svg
   String get profile => 'assets/icons/profile.svg';
 
@@ -31,7 +37,7 @@ class $AssetsIconsGen {
   String get shop => 'assets/icons/shop.svg';
 
   /// List of all assets
-  List<String> get values => [profile, shop];
+  List<String> get values => [appleLogo, googleIcon, profile, shop];
 }
 
 class $AssetsImagesGen {

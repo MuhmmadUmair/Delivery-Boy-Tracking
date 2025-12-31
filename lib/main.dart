@@ -3,6 +3,7 @@ import 'dart:developer';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_google_apple_notif/app/styles/color_scheme.dart';
 import 'package:firebase_google_apple_notif/app/styles/typography.dart';
+import 'package:firebase_google_apple_notif/view/auth/profile_type.dart';
 import 'package:firebase_google_apple_notif/view/home/manager/track_delivery_boy.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -38,7 +39,7 @@ class MyApp extends StatelessWidget {
               TypographyExtension.from(AppColorScheme.light()),
             ],
           ),
-          home: const TrackDeliveryBoysScreen(),
+          home: const ProfileTypeSelectionScreen(),
         );
       },
     );

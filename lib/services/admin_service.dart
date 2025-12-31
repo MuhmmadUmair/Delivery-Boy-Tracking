@@ -1,42 +1,39 @@
-import 'package:firebase_google_apple_notif/model/admin_model.dart';
-import 'package:firebase_google_apple_notif/model/patner_model.dart';
-import 'package:firebase_google_apple_notif/model/query_model.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_google_apple_notif/repository/admin_repository.dart';
 import 'package:flutter/material.dart';
 
 class AdminService {
   final AdminRepository _repo = AdminRepository();
 
-  /// ================= Dashboard =================
-  Future<List<AdminModel>> fetchAdminDashboard() async {
-    // Uncomment below to use real API later
-    // final response = await http.get(Uri.parse('$baseUrl/dashboard'));
-    // if (response.statusCode == 200) { ... }
-    return _repo.getDashboardCards();
-  }
+  /// Link delivery boy using delivery code (auto detect manager ID)
+  Future<void> linkDeliveryBoy({
+    required String deliveryCode,
+    required BuildContext context,
+  }) async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
 
-  /// ================= Recent Activities =================
-  Future<List<AdminModel>> fetchRecentActivity() async {
-    return _repo.getRecentActivities();
-  }
+      if (currentUser == null) {
+        throw Exception('Manager not logged in');
+      }
 
-  /// ================= Partners =================
-  Future<List<PartnerModel>> fetchPartners(BuildContext context) async {
-    return _repo.getPartners();
-  }
+      final managerId = currentUser.uid;
 
-  /// ================= Queries =================
-  Future<List<QueryModel>> fetchQueries() async {
-    return _repo.getQueries();
-  }
+      final doc = await _repo.getDeliveryBoy(deliveryCode);
 
-  /// ================= Optional Dashboard stats =================
-  Future<List<Map<String, dynamic>>> fetchDashboardStats() async {
-    return _repo.getDashboardStats();
-  }
+      await _repo.linkToManager(doc.id, managerId);
 
-  /// ================= Optional Recent Partner =================
-  Future<List<Map<String, dynamic>>> fetchRecentPartner() async {
-    return _repo.getRecentPartner();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Delivery boy linked successfully!')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: ${e.toString()}')));
+      }
+    }
   }
 }

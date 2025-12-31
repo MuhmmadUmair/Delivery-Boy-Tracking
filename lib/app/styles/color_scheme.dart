@@ -93,7 +93,7 @@ class AppColorScheme extends ThemeExtension<AppColorScheme> {
     bottomSheetPrimary: Color(0xFF2E233D),
 
     // Input fields
-    inputBackground: Color(0xFFF1F5F9),
+    inputBackground: Color(0xFF2B233D),
     inputText: Color(0xFF0F172A),
     inputBorder: Color(0xFFE2E8F0),
     inputIcon: Color(0xFF64748B),
