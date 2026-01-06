@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_google_apple_notif/services/delivery_serivce.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_google_apple_notif/services/common/auth_service.dart';
-import 'package:firebase_google_apple_notif/view/home/user/user_map_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_google_apple_notif/view/map/user/track_order_screen.dart';
 import 'package:firebase_google_apple_notif/view/profile/user/user_profile.dart';
 
+/// ================= DELIVERY DASHBOARD SCREEN =================
 class DeliveryDashboardScreen extends StatefulWidget {
   const DeliveryDashboardScreen({super.key});
 
@@ -19,10 +19,9 @@ class _DeliveryDashboardScreenState extends State<DeliveryDashboardScreen> {
   int _currentIndex = 0;
   bool _isOnline = true;
 
-  final AuthService _authService = AuthService();
-  User? _currentUser;
-
+  final DeliveryService _deliveryService = DeliveryService();
   late StreamSubscription<List<ConnectivityResult>> _connectivitySub;
+  late StreamSubscription<bool> _onlineStatusSub;
   final Connectivity _connectivity = Connectivity();
 
   late List<Widget> _pages;
@@ -30,121 +29,144 @@ class _DeliveryDashboardScreenState extends State<DeliveryDashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _currentUser = FirebaseAuth.instance.currentUser;
+    _initPages();
+    _initDeliveryService();
+    _initConnectivityListener();
+    _initOnlineStatusListener();
+  }
 
-    // Initialize pages
+  void _initPages() {
     _pages = [
-      _DashboardPage(isOnline: _isOnline),
-      const Center(child: Text("Map Page")),
-      const Center(child: Text("History Page")),
+      _DashboardPage(isOnline: _isOnline, deliveryService: _deliveryService),
+      const UserMapScreen(),
+      const Center(
+        child: Text("History Page", style: TextStyle(color: Colors.white)),
+      ),
       const UserProfile(),
     ];
+  }
 
-    // Listen to connectivity changes
-    _connectivitySub = _connectivity.onConnectivityChanged.listen((
-      List<ConnectivityResult> results,
-    ) async {
-      // Consider the device online if any connection is available
-      bool isConnected = results.any((r) => r != ConnectivityResult.none);
+  void _initDeliveryService() async {
+    _deliveryService.init();
+    await _deliveryService.createDeliveryBoyIfNotExists();
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await _deliveryService.setOnlineAndStartHeartbeat(user.uid);
+    }
+  }
 
-      setState(() {
-        _isOnline = isConnected;
-        _pages[0] = _DashboardPage(isOnline: _isOnline);
-      });
-
-      if (_currentUser != null) {
-        if (isConnected) {
-          await _authService.setDeliveryBoyStatus(_currentUser!.uid, 'idle');
-        } else {
-          await _authService.setDeliveryBoyStatus(_currentUser!.uid, 'offline');
-        }
+  void _initConnectivityListener() {
+    _connectivitySub = _connectivity.onConnectivityChanged.listen((results) {
+      final isConnected = results.any((r) => r != ConnectivityResult.none);
+      if (mounted) {
+        setState(() {
+          _isOnline = isConnected;
+          _updatePages();
+        });
       }
     });
+  }
 
-    // Ensure onDisconnect is set to offline for app termination
-    if (_currentUser != null) {
-      final statusRef = FirebaseDatabase.instance.ref(
-        'delivery_boys/${_currentUser!.uid}/status',
-      );
-      statusRef.onDisconnect().set('offline');
-    }
+  void _initOnlineStatusListener() {
+    _onlineStatusSub = _deliveryService.onlineStatusStream.listen((isOnline) {
+      if (mounted) {
+        setState(() {
+          _isOnline = isOnline;
+          _updatePages();
+        });
+      }
+    });
+  }
+
+  void _updatePages() {
+    _pages[0] = _DashboardPage(
+      isOnline: _isOnline,
+      deliveryService: _deliveryService,
+    );
   }
 
   @override
   void dispose() {
     _connectivitySub.cancel();
+    _onlineStatusSub.cancel();
+    _deliveryService.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: _pages),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: Colors.white.withOpacity(0.95),
-        selectedItemColor: Colors.blue,
-        unselectedItemColor: Colors.grey,
-        onTap: (index) => setState(() => _currentIndex = index),
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
-          BottomNavigationBarItem(icon: Icon(Icons.map), label: "Map"),
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: "History"),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profile"),
-        ],
+    return SafeArea(
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0F172A),
+        body: IndexedStack(index: _currentIndex, children: _pages),
+        bottomNavigationBar: BottomNavigationBar(
+          currentIndex: _currentIndex,
+          type: BottomNavigationBarType.fixed,
+          backgroundColor: const Color(0xFF161E2E),
+          selectedItemColor: Colors.blue,
+          unselectedItemColor: Colors.grey,
+          onTap: (index) => setState(() => _currentIndex = index),
+          items: const [
+            BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
+            BottomNavigationBarItem(icon: Icon(Icons.map), label: "Map"),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.history),
+              label: "History",
+            ),
+            BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profile"),
+          ],
+        ),
       ),
     );
   }
 }
 
-// ===================== DASHBOARD PAGE =====================
+/// ================= DASHBOARD PAGE =================
 class _DashboardPage extends StatelessWidget {
   final bool isOnline;
+  final DeliveryService deliveryService;
 
-  const _DashboardPage({super.key, required this.isOnline});
+  const _DashboardPage({required this.isOnline, required this.deliveryService});
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+
     return SafeArea(
       child: SingleChildScrollView(
         padding: const EdgeInsets.only(bottom: 80),
         child: Column(
           children: [
             _buildTopAppBar(),
-            _buildProfileHeader(),
+            _buildProfileHeader(isOnline, user),
             _buildHeroCard(context),
-            _buildStatsGrid(),
+            _buildStatsGrid(user!.uid),
             _buildRecentActivityHeader(),
-            _buildRecentActivityList(),
+            _buildRecentActivityList(user.uid),
           ],
         ),
       ),
     );
   }
 
-  // ======= TOP APP BAR =======
   Widget _buildTopAppBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+        color: const Color(0xFF0F172A),
+        border: Border(bottom: BorderSide(color: Colors.grey.shade800)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.grey.shade100,
-            ),
-            child: const Icon(Icons.menu, size: 28),
-          ),
+          const Icon(Icons.menu, size: 28, color: Colors.white),
           const Text(
             "Dashboard",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
           ),
           Stack(
             children: [
@@ -176,8 +198,10 @@ class _DashboardPage extends StatelessWidget {
     );
   }
 
-  // ======= PROFILE HEADER =======
-  Widget _buildProfileHeader() {
+  Widget _buildProfileHeader(bool isOnline, User? user) {
+    final displayName =
+        user?.displayName ?? user?.email?.split('@').first ?? "Delivery Boy";
+
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Row(
@@ -193,10 +217,11 @@ class _DashboardPage extends StatelessWidget {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.blue, width: 2),
-                      image: const DecorationImage(
+                      image: DecorationImage(
                         fit: BoxFit.cover,
                         image: NetworkImage(
-                          'https://lh3.googleusercontent.com/aida-public/AB6AXuBGLFkUbp7qKxomI6bsGsoDjSymefB1v4h9w78aCNQ56qPapbWarijOYqk_qqZWI893yZrrc3KOONcEOIWjLGORtaDXaD33LECNPo5QmydElC7D2C37c0laSPFUXP3qXbUoLNovzapGChykqbApih7tjfTvUKtNEN2yAk4Kt2lgacjiBNCnPxNkUlX5QXtuI3bnnepuMH4q9Wkxv8jCPg_5-FZ12X_mPEhj5mfr_0oMtSslqeiN-K8eHMtBk-wdR-cgqFOov3yj15A',
+                          user?.photoURL ??
+                              'https://ui-avatars.com/api/?name=${Uri.encodeComponent(displayName)}&background=135BEC&color=fff',
                         ),
                       ),
                     ),
@@ -219,12 +244,16 @@ class _DashboardPage extends StatelessWidget {
               const SizedBox(width: 12),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
+                children: [
                   Text(
-                    "Hello, Alex",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    "Hello, $displayName",
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
                   ),
-                  Text(
+                  const Text(
                     "Delivery Partner",
                     style: TextStyle(fontSize: 14, color: Colors.grey),
                   ),
@@ -271,15 +300,12 @@ class _DashboardPage extends StatelessWidget {
     );
   }
 
-  // ======= HERO CARD =======
   Widget _buildHeroCard(BuildContext context) {
     return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const UserMapScreen()),
-        );
-      },
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const UserMapScreen()),
+      ),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         height: 128,
@@ -297,24 +323,49 @@ class _DashboardPage extends StatelessWidget {
     );
   }
 
-  // ======= STATS GRID =======
-  Widget _buildStatsGrid() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: GridView.count(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        crossAxisCount: 2,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: 1.3,
-        children: [
-          _buildStatCard(Icons.schedule, "Duration", "6h 12m"),
-          _buildStatCard(Icons.local_shipping, "Stops", "18"),
-          _buildStatCard(Icons.timer_off, "Stop Time", "45m"),
-          _buildStatCard(Icons.verified, "Success", "98%", color: Colors.green),
-        ],
-      ),
+  Widget _buildStatsGrid(String uid) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: deliveryService.computeOrderStats(uid),
+      builder: (context, snapshot) {
+        final stats =
+            snapshot.data ??
+            {'totalOrders': 0, 'completedOrders': 0, 'successRate': '0%'};
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 2,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.3,
+            children: [
+              _buildStatCard(
+                Icons.local_shipping,
+                "Total Orders",
+                "${stats['totalOrders']}",
+              ),
+              _buildStatCard(
+                Icons.check_circle,
+                "Completed",
+                "${stats['completedOrders']}",
+              ),
+              _buildStatCard(
+                Icons.timer,
+                "Pending",
+                "${stats['totalOrders'] - stats['completedOrders']}",
+              ),
+              _buildStatCard(
+                Icons.verified,
+                "Success",
+                stats['successRate'],
+                color: Colors.green,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -338,12 +389,16 @@ class _DashboardPage extends StatelessWidget {
             children: [
               Icon(icon, color: Colors.grey, size: 20),
               const SizedBox(width: 4),
-              Text(
-                label.toUpperCase(),
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: Colors.grey,
-                  letterSpacing: 1,
+              Expanded(
+                child: Text(
+                  label.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey,
+                    letterSpacing: 1,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -362,7 +417,6 @@ class _DashboardPage extends StatelessWidget {
     );
   }
 
-  // ======= RECENT ACTIVITY =======
   Widget _buildRecentActivityHeader() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -371,7 +425,11 @@ class _DashboardPage extends StatelessWidget {
         children: const [
           Text(
             "Recent Activity",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
           ),
           Text("See All", style: TextStyle(color: Colors.blue)),
         ],
@@ -379,114 +437,258 @@ class _DashboardPage extends StatelessWidget {
     );
   }
 
-  Widget _buildRecentActivityList() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        children: [
-          _buildActivityItem(
-            icon: Icons.inventory,
-            title: "Order #4922",
-            subtitle: "123 Main St, Downtown",
-            time: "14:30",
-            status: "Done",
-            statusColor: Colors.green,
-          ),
-          _buildActivityItem(
-            icon: Icons.local_mall,
-            title: "Pickup #4923",
-            subtitle: "Starbucks, 5th Ave",
-            time: "15:00",
-            status: "Picked",
-            statusColor: Colors.orange,
-          ),
-          _buildActivityItem(
-            icon: Icons.inventory,
-            title: "Order #4920",
-            subtitle: "78 Broadway Ave",
-            time: "13:15",
-            status: "Done",
-            statusColor: Colors.grey,
-            opacity: 0.6,
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildRecentActivityList(String deliveryBoyId) {
+    return StreamBuilder<List<Map<String, dynamic>>>(
+      stream: deliveryService.streamOrders(deliveryBoyId: deliveryBoyId),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.all(32),
+            child: Center(child: CircularProgressIndicator(color: Colors.blue)),
+          );
+        }
 
-  Widget _buildActivityItem({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required String time,
-    required String status,
-    required Color statusColor,
-    double opacity = 1,
-  }) {
-    return Opacity(
-      opacity: opacity,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF192233),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey.shade800),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: Container(
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.1),
-                shape: BoxShape.circle,
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.red.withOpacity(0.3)),
               ),
-              child: Icon(icon, color: statusColor),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+              child: Row(
+                children: const [
+                  Icon(Icons.error_outline, color: Colors.red),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      "Failed to load orders",
+                      style: TextStyle(color: Colors.red),
                     ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ],
               ),
             ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
+          );
+        }
+
+        final orders = snapshot.data ?? [];
+
+        if (orders.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              children: const [
+                Icon(Icons.inbox_outlined, size: 64, color: Colors.grey),
+                SizedBox(height: 16),
                 Text(
-                  time,
-                  style: const TextStyle(
+                  "No orders yet",
+                  style: TextStyle(
+                    color: Colors.grey,
+                    fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
                   ),
                 ),
-                Row(
-                  children: [
-                    Icon(Icons.check_circle, color: statusColor, size: 14),
-                    const SizedBox(width: 2),
-                    Text(
-                      status,
-                      style: TextStyle(fontSize: 10, color: statusColor),
-                    ),
-                  ],
+                SizedBox(height: 8),
+                Text(
+                  "Your assigned orders will appear here",
+                  style: TextStyle(color: Colors.grey),
+                  textAlign: TextAlign.center,
                 ),
               ],
             ),
-          ],
-        ),
+          );
+        }
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            children: orders.map((order) => _buildOrderItem(order)).toList(),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildOrderItem(Map<String, dynamic> order) {
+    final customerName = order['customerName'] ?? "Unknown";
+    final customerPhone = order['customerPhone'] ?? "N/A";
+    final description = order['description'] ?? "No description";
+    final pickup = order['pickup'];
+    final drop = order['drop'];
+    final status = order['status'] ?? "assigned";
+    final orderId = order['orderId'] ?? "";
+
+    Color statusColor;
+    IconData statusIcon;
+
+    switch (status.toLowerCase()) {
+      case 'assigned':
+        statusColor = Colors.blue;
+        statusIcon = Icons.assignment;
+        break;
+      case 'picked':
+        statusColor = Colors.orange;
+        statusIcon = Icons.local_shipping;
+        break;
+      case 'done':
+      case 'delivered':
+        statusColor = Colors.green;
+        statusIcon = Icons.check_circle;
+        break;
+      case 'cancelled':
+        statusColor = Colors.red;
+        statusIcon = Icons.cancel;
+        break;
+      default:
+        statusColor = Colors.grey;
+        statusIcon = Icons.info;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF192233),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade800),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.1),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(statusIcon, color: statusColor, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      status.toUpperCase(),
+                      style: TextStyle(
+                        color: statusColor,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ],
+                ),
+                Text(
+                  "#${orderId.substring(0, 8)}",
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          // Content
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.person, color: Colors.blue, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        customerName,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Icon(Icons.phone, color: Colors.grey, size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      customerPhone,
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.description, color: Colors.grey, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        description,
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                  ],
+                ),
+                if (pickup != null) ...[
+                  const SizedBox(height: 12),
+                  const Divider(color: Colors.grey),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.my_location,
+                        color: Colors.orange,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "Pickup: ${pickup['lat']?.toStringAsFixed(4)}, ${pickup['lng']?.toStringAsFixed(4)}",
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (drop != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on,
+                        color: Colors.red,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "Drop: ${drop['lat']?.toStringAsFixed(4)}, ${drop['lng']?.toStringAsFixed(4)}",
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

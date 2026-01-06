@@ -1,11 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_database/firebase_database.dart';
-import 'package:firebase_google_apple_notif/view/home/manager/add_delivery_boy.dart';
-import 'package:firebase_google_apple_notif/view/home/manager/manager_setting_screen.dart';
-import 'package:firebase_google_apple_notif/view/home/manager/track_delivery_boy.dart';
+import 'package:firebase_google_apple_notif/services/manager_service.dart';
+import 'package:firebase_google_apple_notif/view/orders/manager/order_overview_screen.dart';
+import 'package:firebase_google_apple_notif/view/home/manager/team_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:firebase_google_apple_notif/view/home/manager/add_delivery_boy.dart';
+import 'package:firebase_google_apple_notif/view/profile/manager/manager_setting_screen.dart';
+import 'package:firebase_google_apple_notif/view/map/manager/track_delivery_boy.dart';
 
 class ManagerDashboardScreen extends StatefulWidget {
   const ManagerDashboardScreen({super.key});
@@ -15,19 +17,20 @@ class ManagerDashboardScreen extends StatefulWidget {
 }
 
 class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
+  final ManagerService _managerService = ManagerService();
   int _currentIndex = 0;
-
-  final List<Widget> _pages = [
-    DashboardContent(),
-    TrackDeliveryBoysScreen(),
-    ManagerSettingScreen(),
-  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF101622),
-      body: _pages[_currentIndex],
+      body: _currentIndex == 0
+          ? _buildDashboard()
+          : _currentIndex == 1
+          ? const TrackDeliveryBoysScreen()
+          : _currentIndex == 2
+          ? const OrdersOverviewScreen()
+          : const ManagerSettingsScreen(),
       bottomNavigationBar: _buildBottomNav(),
       floatingActionButton: _currentIndex == 0
           ? FloatingActionButton(
@@ -47,72 +50,21 @@ class _ManagerDashboardScreenState extends State<ManagerDashboardScreen> {
     );
   }
 
-  Widget _buildBottomNav() => BottomAppBar(
-    color: const Color(0xFF1C2333),
-    shape: const CircularNotchedRectangle(),
-    notchMargin: 8,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          IconButton(
-            icon: Icon(
-              Icons.dashboard,
-              color: _currentIndex == 0 ? const Color(0xFF135BEC) : Colors.grey,
-            ),
-            onPressed: () => setState(() => _currentIndex = 0),
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.map,
-              color: _currentIndex == 1 ? const Color(0xFF135BEC) : Colors.grey,
-            ),
-            onPressed: () => setState(() => _currentIndex = 1),
-          ),
-          const SizedBox(width: 40), // Space for FAB
-          IconButton(
-            icon: Icon(
-              Icons.settings,
-              color: _currentIndex == 2 ? const Color(0xFF135BEC) : Colors.grey,
-            ),
-            onPressed: () => setState(() => _currentIndex = 2),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-// ───────────── DASHBOARD CONTENT ─────────────
-class DashboardContent extends StatelessWidget {
-  DashboardContent({super.key});
-
-  static const managerUid = "VHKCoMWZeGbb4MDaabLJYslxztp2";
-  final DatabaseReference rtdbRef = FirebaseDatabase.instance.ref(
-    'delivery_boys',
-  );
-
-  @override
-  Widget build(BuildContext context) {
+  // ───────────── DASHBOARD ─────────────
+  Widget _buildDashboard() {
     return SafeArea(
       child: Column(
         children: [
           _buildTopBar(),
           Expanded(
-            child: StreamBuilder<DocumentSnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('managers')
-                  .doc(managerUid)
-                  .snapshots(),
-              builder: (context, managerSnapshot) {
-                if (!managerSnapshot.hasData) {
+            child: StreamBuilder(
+              stream: _managerService.getManagerStream(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                final managerData =
-                    managerSnapshot.data!.data() as Map<String, dynamic>?;
-
+                final managerData = snapshot.data!.data();
                 final deliveryBoyIds = List<String>.from(
                   managerData?['deliveryBoys'] ?? [],
                 );
@@ -126,9 +78,9 @@ class DashboardContent extends StatelessWidget {
                   );
                 }
 
-                // ───────────── STREAM FROM REALTIME DATABASE ─────────────
-                return StreamBuilder<DatabaseEvent>(
-                  stream: rtdbRef.onValue,
+                // ───────────── REALTIME DATABASE STREAM ─────────────
+                return StreamBuilder(
+                  stream: _managerService.getDeliveryBoysRealtime(),
                   builder: (context, rtdbSnapshot) {
                     if (!rtdbSnapshot.hasData ||
                         rtdbSnapshot.data!.snapshot.value == null) {
@@ -136,15 +88,11 @@ class DashboardContent extends StatelessWidget {
                     }
 
                     final rtdbData = Map<String, dynamic>.from(
-                      (rtdbSnapshot.data!.snapshot.value as Map),
+                      rtdbSnapshot.data!.snapshot.value as Map,
                     );
 
-                    // ───────────── MERGE WITH FIRESTORE DATA ─────────────
-                    return StreamBuilder<QuerySnapshot>(
-                      stream: FirebaseFirestore.instance
-                          .collection('delivery_boys')
-                          .where('uid', whereIn: deliveryBoyIds)
-                          .snapshots(),
+                    return FutureBuilder(
+                      future: _managerService.getDeliveryBoys(),
                       builder: (context, boysSnapshot) {
                         if (!boysSnapshot.hasData) {
                           return const Center(
@@ -152,43 +100,22 @@ class DashboardContent extends StatelessWidget {
                           );
                         }
 
-                        final deliveryBoys = boysSnapshot.data!.docs.map((doc) {
-                          final data = doc.data() as Map<String, dynamic>;
-                          final uid = data['uid'];
+                        // ───────────── MERGE FIRESTORE + RTDB ─────────────
+                        final deliveryBoys = _managerService.mergeDeliveryBoys(
+                          boysSnapshot.data as List<Map<String, dynamic>>,
+                          rtdbData,
+                        );
 
-                          final rtdbBoy =
-                              rtdbData[uid] as Map<dynamic, dynamic>?;
-
-                          return {
-                            'uid': uid,
-                            'name': data['name'] ?? 'Unknown',
-                            'address': data['address'] ?? '',
-                            'createdAt': data['createdAt'],
-                            'success': data['success'] ?? false,
-                            'status': rtdbBoy != null
-                                ? rtdbBoy['status'] ?? 'offline'
-                                : 'offline',
-                            'lastStatusUpdate': rtdbBoy != null
-                                ? DateTime.fromMillisecondsSinceEpoch(
-                                    rtdbBoy['lastUpdated'],
-                                  )
-                                : null,
-                            'lastLocation': rtdbBoy != null
-                                ? rtdbBoy['location']
-                                : null,
-                            'distance': (data['stats']?['totalDistance'] ?? 0)
-                                .toDouble(),
-                          };
-                        }).toList();
-
-                        final stats = _calculateStats(deliveryBoys);
+                        final stats = _managerService.calculateStats(
+                          deliveryBoys,
+                        );
 
                         return SingleChildScrollView(
                           padding: const EdgeInsets.only(bottom: 90),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _buildMapCard(deliveryBoys, context),
+                              _buildMapCard(deliveryBoys),
                               _buildStatsRow(stats),
                               _buildTeamHeader(),
                               _buildTeamList(deliveryBoys),
@@ -265,10 +192,7 @@ class DashboardContent extends StatelessWidget {
   );
 
   // ───────────── MAP CARD ─────────────
-  Widget _buildMapCard(
-    List<Map<String, dynamic>> deliveryBoys,
-    BuildContext context,
-  ) {
+  Widget _buildMapCard(List<Map<String, dynamic>> deliveryBoys) {
     final Set<Marker> markers = deliveryBoys
         .map((d) {
           final location = d['lastLocation'];
@@ -277,7 +201,10 @@ class DashboardContent extends StatelessWidget {
               location['lng'] != null) {
             return Marker(
               markerId: MarkerId(d['uid']),
-              position: LatLng(location['lat'], location['lng']),
+              position: LatLng(
+                (location['lat'] as num).toDouble(),
+                (location['lng'] as num).toDouble(),
+              ),
               infoWindow: InfoWindow(title: d['name']),
             );
           }
@@ -294,7 +221,6 @@ class DashboardContent extends StatelessWidget {
           height: 220,
           child: Stack(
             children: [
-              /// 🗺 MAP PREVIEW (NON-INTERACTIVE)
               GoogleMap(
                 initialCameraPosition: TrackDeliveryBoysScreen.initialPosition,
                 markers: markers,
@@ -306,8 +232,6 @@ class DashboardContent extends StatelessWidget {
                 scrollGesturesEnabled: false,
                 zoomGesturesEnabled: false,
               ),
-
-              /// 👉 TAP ANYWHERE → OPEN FULL MAP SCREEN
               Positioned.fill(
                 child: Material(
                   color: Colors.transparent,
@@ -323,68 +247,6 @@ class DashboardContent extends StatelessWidget {
                   ),
                 ),
               ),
-
-              /// 📍 LEFT BOTTOM → ACTIVE ZONE
-              Positioned(
-                bottom: 12,
-                left: 12,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.7),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: const [
-                      Icon(
-                        Icons.location_on,
-                        color: Color(0xFF135BEC),
-                        size: 16,
-                      ),
-                      SizedBox(width: 6),
-                      Text(
-                        "DHA Phase 6",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              /// 🧭 RIGHT BOTTOM → NAVIGATION ICON (VISUAL ONLY)
-              Positioned(
-                bottom: 12,
-                right: 12,
-                child: GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => TrackDeliveryBoysScreen(),
-                      ),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF135BEC),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.navigation,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -392,37 +254,47 @@ class DashboardContent extends StatelessWidget {
     );
   }
 
-  // ───────────── STATS ─────────────
-  Widget _buildStatsRow(Map<String, dynamic> stats) => Padding(
-    padding: const EdgeInsets.all(16),
-    child: Row(
-      children: [
-        _buildStatCard(
-          title: "Distance",
-          value: stats['totalDistance'].toStringAsFixed(1),
-          valueSuffix: " km",
-          subtitle: "+12% vs yest.",
-          icon: Icons.route,
-          color: Colors.blue,
-        ),
-        _buildStatCard(
-          title: "Active",
-          value: "${stats['active']}",
-          valueSuffix: "/${stats['total']}",
-          subtitle: "${stats['offline']} offline",
-          icon: Icons.local_shipping,
-          color: Colors.orange,
-        ),
-        _buildStatCard(
-          title: "Success",
-          value: "${stats['successRate'].toStringAsFixed(0)}%",
-          subtitle: "On target",
-          icon: Icons.check_circle,
-          color: Colors.green,
-        ),
-      ],
-    ),
-  );
+  // ───────────── STATS ROW ─────────────
+  Widget _buildStatsRow(Map<String, dynamic> stats) {
+    final totalDistance = (stats['totalDistance'] as num?)?.toDouble() ?? 0.0;
+
+    final successRate = (stats['successRate'] as num?)?.toDouble() ?? 0.0;
+
+    final active = stats['active'] ?? 0;
+    final total = stats['total'] ?? 0;
+    final offline = stats['offline'] ?? 0;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          _buildStatCard(
+            title: "Distance",
+            value: totalDistance.toStringAsFixed(1),
+            valueSuffix: " km",
+            subtitle: "+12% vs yest.",
+            icon: Icons.route,
+            color: Colors.blue,
+          ),
+          _buildStatCard(
+            title: "Active",
+            value: "$active",
+            valueSuffix: "/$total",
+            subtitle: "$offline offline",
+            icon: Icons.local_shipping,
+            color: Colors.orange,
+          ),
+          _buildStatCard(
+            title: "Success",
+            value: "${successRate.toStringAsFixed(0)}%",
+            subtitle: "On target",
+            icon: Icons.check_circle,
+            color: Colors.green,
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildStatCard({
     required String title,
@@ -501,13 +373,13 @@ class DashboardContent extends StatelessWidget {
     ),
   );
 
-  // ───────────── TEAM ─────────────
-  Widget _buildTeamHeader() => const Padding(
-    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+  // ───────────── TEAM LIST ─────────────
+  Widget _buildTeamHeader() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
     child: Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
+        const Text(
           "Team Status",
           style: TextStyle(
             fontSize: 18,
@@ -515,38 +387,41 @@ class DashboardContent extends StatelessWidget {
             color: Colors.white,
           ),
         ),
-        Text("View All", style: TextStyle(color: Color(0xFF135BEC))),
+        GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const TeamScreen()),
+            );
+          },
+          child: const Text(
+            "View All",
+            style: TextStyle(color: Color(0xFF135BEC)),
+          ),
+        ),
       ],
     ),
   );
 
-  Widget _buildTeamList(List<Map<String, dynamic>> teamList) => Column(
-    children: teamList.map((data) {
-      final status = _getRealTimeStatus(data);
-      return _buildTeamCard(
-        name: data['name'] ?? 'Unknown',
-        status: status.toUpperCase(),
-        statusColor: _getStatusColor(status),
-        lastSeen: data['createdAt'] != null && status == 'offline'
-            ? _getLastSeen((data['createdAt'] as Timestamp).toDate())
-            : null,
-        address: data['address'] ?? '',
-        isOffline: status == 'offline',
-      );
-    }).toList(),
-  );
+  Widget _buildTeamList(List<Map<String, dynamic>> teamList) {
+    // Show only the first 3 users
+    final displayList = teamList.length > 3 ? teamList.sublist(0, 3) : teamList;
 
-  /// ───────────── Calculate real-time status ─────────────
-  String _getRealTimeStatus(Map<String, dynamic> data) {
-    final lastUpdate = data['lastStatusUpdate'] as DateTime?;
-    final now = DateTime.now();
-
-    if (lastUpdate == null) return 'offline';
-
-    final diff = now.difference(lastUpdate).inSeconds;
-
-    if (diff > 60) return 'offline'; // mark offline if no update > 60 sec
-    return (data['status'] ?? 'idle').toLowerCase();
+    return Column(
+      children: displayList.map((data) {
+        final status = _managerService.getRealTimeStatus(data);
+        return _buildTeamCard(
+          name: data['name'] ?? 'Unknown',
+          status: status.toUpperCase(),
+          statusColor: _managerService.getStatusColor(status),
+          lastSeen: data['createdAt'] != null && status == 'offline'
+              ? _getLastSeen((data['createdAt'] as Timestamp).toDate())
+              : null,
+          address: data['address'] ?? '',
+          isOffline: status == 'offline',
+        );
+      }).toList(),
+    );
   }
 
   Widget _buildTeamCard({
@@ -637,47 +512,48 @@ class DashboardContent extends StatelessWidget {
     ),
   );
 
-  // ───────────── STATS HELPERS ─────────────
-  Map<String, dynamic> _calculateStats(
-    List<Map<String, dynamic>> deliveryBoys,
-  ) {
-    int total = deliveryBoys.length;
-    int active = deliveryBoys.where((d) {
-      final status = _getRealTimeStatus(d);
-      return status == 'moving' || status == 'idle';
-    }).length;
-    int offline = total - active;
+  // ───────────── BOTTOM NAV ─────────────
+  Widget _buildBottomNav() => BottomAppBar(
+    color: const Color(0xFF1C2333),
+    shape: const CircularNotchedRectangle(),
+    notchMargin: 8,
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        IconButton(
+          icon: Icon(
+            Icons.dashboard,
+            color: _currentIndex == 0 ? const Color(0xFF135BEC) : Colors.grey,
+          ),
+          onPressed: () => setState(() => _currentIndex = 0),
+        ),
+        IconButton(
+          icon: Icon(
+            Icons.map,
+            color: _currentIndex == 1 ? const Color(0xFF135BEC) : Colors.grey,
+          ),
+          onPressed: () => setState(() => _currentIndex = 1),
+        ),
+        _currentIndex == 0 ? const SizedBox(width: 40) : SizedBox.shrink(),
+        IconButton(
+          icon: Icon(
+            Icons.list_alt_rounded,
+            color: _currentIndex == 2 ? const Color(0xFF135BEC) : Colors.grey,
+          ),
+          onPressed: () => setState(() => _currentIndex = 2),
+        ),
+        IconButton(
+          icon: Icon(
+            Icons.settings,
+            color: _currentIndex == 3 ? const Color(0xFF135BEC) : Colors.grey,
+          ),
+          onPressed: () => setState(() => _currentIndex = 3),
+        ),
+      ],
+    ),
+  );
 
-    double totalDistance = 0;
-    int successCount = 0;
-
-    for (var d in deliveryBoys) {
-      totalDistance += (d['distance'] ?? 0);
-      if (d['success'] == true) successCount++;
-    }
-
-    double successRate = total > 0 ? (successCount / total) * 100 : 0;
-
-    return {
-      'total': total,
-      'active': active,
-      'offline': offline,
-      'totalDistance': totalDistance,
-      'successRate': successRate,
-    };
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'moving':
-        return Colors.green;
-      case 'idle':
-        return Colors.orange;
-      default:
-        return Colors.grey;
-    }
-  }
-
+  // ───────────── LAST SEEN HELPER ─────────────
   String _getLastSeen(DateTime dateTime) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);

@@ -1,12 +1,13 @@
+import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_google_apple_notif/services/manager_service.dart';
 import 'package:firebase_google_apple_notif/gen/assets.gen.dart';
-import 'dart:ui' as ui;
-import 'dart:developer';
-import 'package:flutter/services.dart';
-import 'dart:async';
 
 class TrackDeliveryBoysScreen extends StatefulWidget {
   const TrackDeliveryBoysScreen({super.key});
@@ -22,21 +23,19 @@ class TrackDeliveryBoysScreen extends StatefulWidget {
 }
 
 class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
-  GoogleMapController? _mapController;
   BitmapDescriptor? _markerIcon;
   String? _mapStyle;
 
   final DatabaseReference rtdbRef = FirebaseDatabase.instance.ref(
     'delivery_boys',
   );
-  final String managerUid = "VHKCoMWZeGbb4MDaabLJYslxztp2";
+  final ManagerService _managerService = ManagerService();
 
   List<Map<String, dynamic>> _deliveryBoys = [];
   String _search = '';
   String _selectedStatus = 'All';
   final List<String> _filters = ['All', 'Moving', 'Idle', 'Offline'];
 
-  StreamSubscription<DocumentSnapshot>? _managerSub;
   StreamSubscription<DatabaseEvent>? _rtdbSub;
   StreamSubscription<QuerySnapshot>? _boysSub;
 
@@ -50,7 +49,6 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
 
   @override
   void dispose() {
-    _managerSub?.cancel();
     _rtdbSub?.cancel();
     _boysSub?.cancel();
     super.dispose();
@@ -75,98 +73,54 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
   }
 
   void _listenDeliveryBoys() {
-    _managerSub = FirebaseFirestore.instance
-        .collection('managers')
-        .doc(managerUid)
-        .snapshots()
-        .listen((managerSnap) {
-          final deliveryBoyIds = List<String>.from(
-            managerSnap.data()?['deliveryBoys'] ?? [],
-          );
+    final currentManagerUid = FirebaseAuth.instance.currentUser!.uid;
 
-          if (deliveryBoyIds.isEmpty) {
-            if (mounted) setState(() => _deliveryBoys = []);
-            return;
-          }
+    // Listen RTDB changes
+    _rtdbSub = rtdbRef.onValue.listen((rtdbSnap) {
+      final rtdbDataRaw = rtdbSnap.snapshot.value as Map<dynamic, dynamic>?;
+      final rtdbData = rtdbDataRaw != null
+          ? rtdbDataRaw.map((key, value) => MapEntry(key.toString(), value))
+          : <String, dynamic>{};
 
-          // Listen RTDB changes
-          _rtdbSub = rtdbRef.onValue.listen((rtdbSnap) {
-            final rtdbData = rtdbSnap.snapshot.value != null
-                ? Map<String, dynamic>.from(rtdbSnap.snapshot.value as Map)
-                : {};
+      // Listen Firestore delivery boys for current manager
+      _boysSub = FirebaseFirestore.instance
+          .collection('delivery_boys')
+          .where('managerId', isEqualTo: currentManagerUid)
+          .snapshots()
+          .listen((boysSnap) {
+            final boys = boysSnap.docs.map((doc) => doc.data()).toList();
+            final merged = _managerService.mergeDeliveryBoys(boys, rtdbData);
 
-            // Listen Firestore delivery boys
-            _boysSub = FirebaseFirestore.instance
-                .collection('delivery_boys')
-                .where('uid', whereIn: deliveryBoyIds)
-                .snapshots()
-                .listen((boysSnap) {
-                  final boys = boysSnap.docs.map((doc) {
-                    final data = doc.data();
-                    final uid = data['uid'];
-                    final rtdbBoy = rtdbData[uid] as Map<dynamic, dynamic>?;
-
-                    Map<String, double>? location;
-                    if (rtdbBoy?['location'] != null) {
-                      final loc = rtdbBoy!['location'] as Map;
-                      location = {
-                        'lat': loc['lat']?.toDouble() ?? 0,
-                        'lng': loc['lng']?.toDouble() ?? 0,
-                      };
-                    }
-
-                    return {
-                      'uid': uid,
-                      'name': data['name'] ?? 'Unknown',
-                      'status':
-                          rtdbBoy?['status']?.toString().toLowerCase() ??
-                          'offline',
-                      'lastStatusUpdate': rtdbBoy != null
-                          ? DateTime.fromMillisecondsSinceEpoch(
-                              rtdbBoy['lastUpdated'] ?? 0,
-                            )
-                          : null,
-                      'lastLocation': location,
-                    };
-                  }).toList();
-
-                  if (mounted) setState(() => _deliveryBoys = boys);
-                });
+            if (mounted) setState(() => _deliveryBoys = merged);
           });
-        });
+    });
   }
 
   Set<Marker> _buildMarkers() {
     final now = DateTime.now();
-
-    final markers = _deliveryBoys
+    return _deliveryBoys
         .where((d) => d['lastLocation'] != null)
         .where((d) {
           final lastUpdate = d['lastStatusUpdate'] as DateTime?;
           final status = d['status']?.toString().toLowerCase() ?? 'offline';
-
-          if (lastUpdate == null) {
-            return false;
-          }
-          if (now.difference(lastUpdate).inSeconds > 60) {
-            return false;
-          }
-          if (status == 'offline') {
-            return false;
-          }
+          if (lastUpdate == null) return false;
+          if (now.difference(lastUpdate).inSeconds > 60) return false;
+          if (status == 'offline') return false;
           return true;
         })
         .map((d) {
           final loc = d['lastLocation'];
           return Marker(
             markerId: MarkerId(d['uid']),
-            position: LatLng(loc['lat'], loc['lng']),
+            position: LatLng(
+              (loc['lat'] as num).toDouble(),
+              (loc['lng'] as num).toDouble(),
+            ),
             infoWindow: InfoWindow(title: d['name']),
             icon: _markerIcon ?? BitmapDescriptor.defaultMarker,
           );
         })
         .toSet();
-    return markers;
   }
 
   @override
@@ -184,7 +138,6 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
               compassEnabled: false,
               mapToolbarEnabled: false,
               onMapCreated: (controller) {
-                _mapController = controller;
                 if (_mapStyle != null) controller.setMapStyle(_mapStyle);
               },
             ),
@@ -277,6 +230,7 @@ class _TrackDeliveryBoysScreenState extends State<TrackDeliveryBoysScreen> {
   );
 }
 
+// ---------------------- Bottom Sheet ----------------------
 class FleetBottomSheet extends StatelessWidget {
   final List<Map<String, dynamic>> deliveryBoys;
   final String search;
@@ -358,7 +312,10 @@ class FleetBottomSheet extends StatelessWidget {
         .where((d) => _getStatus(d) == 'moving')
         .length;
     final idleCount = deliveryBoys.where((d) => _getStatus(d) == 'idle').length;
-    final totalDistance = 450; // Example static distance
+    final totalDistance = deliveryBoys.fold<double>(
+      0,
+      (sum, d) => sum + (d['distance']?.toDouble() ?? 0),
+    );
 
     return DraggableScrollableSheet(
       expand: false,
@@ -381,7 +338,6 @@ class FleetBottomSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            // Fleet Title Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -416,18 +372,16 @@ class FleetBottomSheet extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            // Stats Row
             Row(
               children: [
                 _statCard('Active Riders', activeCount.toString()),
                 const SizedBox(width: 8),
                 _statCard('Idle', idleCount.toString()),
                 const SizedBox(width: 8),
-                _statCard('Distance', '${totalDistance} km'),
+                _statCard('Distance', '${totalDistance.toStringAsFixed(1)} km'),
               ],
             ),
             const SizedBox(height: 16),
-            // Rider Cards
             SizedBox(
               height: 100,
               child: ListView.separated(

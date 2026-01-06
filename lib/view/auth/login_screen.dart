@@ -1,3 +1,7 @@
+import 'package:firebase_google_apple_notif/app/data/exception/app_exceptions.dart';
+import 'package:firebase_google_apple_notif/app/data/response/status.dart';
+import 'package:firebase_google_apple_notif/app/utils/extensions/flush_bar_extension.dart';
+import 'package:firebase_google_apple_notif/app/utils/log_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_google_apple_notif/app/components/my_button.dart';
 import 'package:firebase_google_apple_notif/app/components/my_form_text_field.dart';
@@ -66,6 +70,8 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       if (!mounted) return;
+
+      // Navigate if successful
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -74,11 +80,17 @@ class _LoginScreenState extends State<LoginScreen> {
               : const DeliveryDashboardScreen(),
         ),
       );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
+    } on AppException catch (e) {
+      // Show error FlashBar and stop loading
+      if (mounted) context.flushBarErrorMessage(message: e.userMessage);
+    } catch (e, s) {
+      // Unexpected error
+      if (mounted) {
+        context.flushBarErrorMessage(
+          message: 'Login failed. Please try again.',
+        );
+      }
+      LogManager.logError('LoginScreen', e.toString(), s);
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -87,10 +99,13 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _handleGoogleLogin() async {
     setState(() => isLoading = true);
 
-    try {
-      await _authService.signInWithGoogle(profileType: widget.profileType);
+    final response = await _authService.signInWithGoogle(
+      profileType: widget.profileType,
+    );
 
-      if (!mounted) return;
+    if (!mounted) return;
+
+    if (response.status == Status.completed) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -99,14 +114,11 @@ class _LoginScreenState extends State<LoginScreen> {
               : const DeliveryDashboardScreen(),
         ),
       );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(e.toString())));
-    } finally {
-      if (mounted) setState(() => isLoading = false);
+    } else {
+      context.flushBarErrorMessage(message: "Login Failed");
     }
+
+    if (mounted) setState(() => isLoading = false);
   }
 
   @override
@@ -119,8 +131,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color(0xff121721),
-      appBar: AppBar(backgroundColor: Color(0xff121721)),
+      backgroundColor: const Color(0xff121721),
+      appBar: AppBar(backgroundColor: const Color(0xff121721)),
       body: Padding(
         padding: EdgeInsets.fromLTRB(16.w, 0, 16.w, 16.w),
         child: Form(
@@ -142,9 +154,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Spacer(),
                   LanguageMenu(
                     selectedLanguage: Language('en', 'Eng'),
-                    onSelected: (lang) {
-                      debugPrint('Selected Language: $lang');
-                    },
+                    onSelected: (lang) =>
+                        debugPrint('Selected Language: $lang'),
                   ),
                 ],
               ),
@@ -160,7 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   SizedBox(width: 6.w),
-                  Icon(Icons.waving_hand, color: Colors.amber),
+                  const Icon(Icons.waving_hand, color: Colors.amber),
                 ],
               ),
               SizedBox(height: 4.h),
@@ -182,7 +193,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               SizedBox(height: 6.h),
               MyFormTextField(
-                suffixIcon: Icon(Icons.mail_outline),
+                suffixIcon: const Icon(Icons.mail_outline),
                 hint: 'Enter your email',
                 controller: emailController,
                 textCapitalization: TextCapitalization.none,
@@ -289,9 +300,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   SizedBox(width: 4.w),
                   GestureDetector(
-                    onTap: () {
-                      AuthService.gotoSignup(context, widget.profileType);
-                    },
+                    onTap: () =>
+                        AuthService.gotoSignup(context, widget.profileType),
                     child: Text(
                       'Sign Up',
                       style: context.typography.bodySmall.copyWith(

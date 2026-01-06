@@ -1,71 +1,180 @@
 import 'dart:convert';
 import 'dart:developer';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
+
 class LogManager {
   static const _line = '══════════════════════════════════════════════════════';
 
-  /// Logs an HTTP request
-  static void logRequest(
-    String method,
-    String url,
+  /// Logs an HTTP/Firebase-like request
+  static void logRequest({
+    required String action,
+    String? method,
+    String? collection,
+    String? documentId,
     Map<String, dynamic>? body,
-  ) {
-    _printInSequence([
+  }) {
+    final msg = [
       _line,
-      '📤 REQUEST [$method] → $url',
+      '📤 REQUEST → $action',
+      if (method != null) 'Method: $method',
+      if (collection != null) 'Collection: $collection',
+      if (documentId != null) 'Document ID: $documentId',
       if (body != null && body.isNotEmpty) _prettyJson('Body', body),
       _line,
-    ]);
+    ];
+    _printInSequence(msg);
   }
 
-  /// Logs an HTTP response
-  static void logResponse(String statusCode, String responseBody) {
-    final parsed = _tryParseJson(responseBody);
-
-    _printInSequence([
+  /// Logs a Firebase response/result
+  static void logResponse({
+    required String action,
+    String? status,
+    Map<String, dynamic>? data,
+  }) {
+    final msg = [
       _line,
-      '📥 RESPONSE ← Status: $statusCode',
-      if (parsed != null)
-        _prettyJson('Body', parsed)
-      else
-        'Body:\n$responseBody',
+      '📥 RESPONSE ← $action',
+      if (status != null) 'Status: $status',
+      if (data != null) _prettyJson('Data', data),
       _line,
-    ]);
+    ];
+    _printInSequence(msg);
   }
 
-  /// Logs an error
-  static void logError(String message, [StackTrace? stackTrace]) {
-    _printInSequence([
+  /// Logs a generic error
+  static void logError(
+    String action,
+    String message, [
+    StackTrace? stackTrace,
+  ]) {
+    final msg = [
       _line,
-      '❌ ERROR: $message',
+      '❌ ERROR → $action',
+      'Message: $message',
       if (stackTrace != null) 'StackTrace:\n$stackTrace',
       _line,
-    ]);
+    ];
+    _printInSequence(msg);
   }
 
-  /// Internal: print each line in order using dart:developer's `log()`
+  /// Logs Auth actions
+  static void logAuthAction({
+    required String action,
+    User? user,
+    String? extraInfo,
+  }) {
+    final msg = [
+      _line,
+      '🔑 AUTH → $action',
+      if (user != null) 'UID: ${user.uid}, Email: ${user.email}',
+      if (extraInfo != null) extraInfo,
+      _line,
+    ];
+    _printInSequence(msg);
+  }
+
+  /// Logs ManagerService actions
+  static void logManagerAction({
+    required String action,
+    String? managerId,
+    Map<String, dynamic>? body,
+  }) {
+    final msg = [
+      _line,
+      '🏢 MANAGER SERVICE → $action',
+      if (managerId != null) 'Manager UID: $managerId',
+      if (body != null && body.isNotEmpty) _prettyJson('Body', body),
+      _line,
+    ];
+    _printInSequence(msg);
+  }
+
+  /// Logs DeliveryService actions
+  static void logDeliveryAction({
+    required String action,
+    String? deliveryBoyId,
+    Map<String, dynamic>? body,
+  }) {
+    final msg = [
+      _line,
+      '🏍️ DELIVERY SERVICE → $action',
+      if (deliveryBoyId != null) 'Delivery UID: $deliveryBoyId',
+      if (body != null && body.isNotEmpty) _prettyJson('Body', body),
+      _line,
+    ];
+    _printInSequence(msg);
+  }
+
+  /// Internal: safely print JSON or data
+  static String _prettyJson(String title, dynamic data) {
+    try {
+      const encoder = JsonEncoder.withIndent('  ');
+      return '$title:\n${encoder.convert(data)}';
+    } catch (_) {
+      return '$title: $data';
+    }
+  }
+
+  /// Internal: print line by line
   static void _printInSequence(List<String> lines) {
     for (final line in lines) {
       log(line);
     }
   }
 
-  /// Internal: format JSON with indenting
-  static String _prettyJson(String title, dynamic data) {
-    // try {
-    //   const encoder = JsonEncoder.withIndent('  ');
-    //   return '$title:\n${encoder.convert(data)}';
-    // } catch (_) {
-    return '$title: $data';
-    // }
+  // ==================== UTILITIES =====================
+  /// Logs Firestore document fetch
+  static void logFirestoreDoc({
+    required String action,
+    required DocumentSnapshot<Map<String, dynamic>> doc,
+  }) {
+    logResponse(
+      action: action,
+      data: {...doc.data() ?? {}, 'id': doc.id},
+      status: doc.exists ? 'found' : 'not found',
+    );
   }
 
-  /// Internal: safely parse string to JSON
-  static dynamic _tryParseJson(String raw) {
-    try {
-      return json.decode(raw);
-    } catch (_) {
-      return null;
-    }
+  /// Logs RTDB snapshot
+  static void logRTDBSnapshot({
+    required String action,
+    required DatabaseEvent event,
+  }) {
+    logResponse(
+      action: action,
+      data: event.snapshot.value is Map
+          ? Map<String, dynamic>.from(event.snapshot.value as Map)
+          : {'value': event.snapshot.value},
+    );
+  }
+
+  /// Logs order assignment
+  static void logOrderAssigned({
+    required String orderId,
+    required String managerId,
+    required String deliveryBoyId,
+    Map<String, dynamic>? orderData,
+  }) {
+    logManagerAction(
+      action: 'Order Assigned',
+      managerId: managerId,
+      body: {'orderId': orderId, 'deliveryBoyId': deliveryBoyId, ...?orderData},
+    );
+  }
+
+  /// Logs order creation from delivery boy
+  static void logOrderCreated({
+    required String orderId,
+    required String deliveryBoyId,
+    Map<String, dynamic>? orderData,
+  }) {
+    logDeliveryAction(
+      action: 'Order Created',
+      deliveryBoyId: deliveryBoyId,
+      body: {'orderId': orderId, ...?orderData},
+    );
   }
 }

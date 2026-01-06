@@ -1,5 +1,6 @@
 import 'package:firebase_google_apple_notif/app/components/my_button.dart';
 import 'package:firebase_google_apple_notif/app/components/my_form_text_field.dart';
+import 'package:firebase_google_apple_notif/app/data/exception/app_exceptions.dart';
 import 'package:firebase_google_apple_notif/app/styles/theme_extensions.dart';
 import 'package:firebase_google_apple_notif/app/utils/extensions/flush_bar_extension.dart';
 import 'package:firebase_google_apple_notif/app/utils/extensions/validations_exception.dart';
@@ -42,6 +43,7 @@ class _DeliverySignupScreenState extends State<DeliverySignupScreen> {
   void initState() {
     super.initState();
     fillFormForTesting();
+
     _nameController.addListener(_updateButtonState);
     _emailController.addListener(_updateButtonState);
     _phoneController.addListener(_updateButtonState);
@@ -65,15 +67,13 @@ class _DeliverySignupScreenState extends State<DeliverySignupScreen> {
   }
 
   void _updateButtonState() {
-    final isFilled =
+    isFormFilled.value =
         _nameController.text.trim().isNotEmpty &&
         _emailController.text.trim().isNotEmpty &&
         _phoneController.text.trim().isNotEmpty &&
         _addressController.text.trim().isNotEmpty &&
         _passwordController.text.trim().isNotEmpty &&
         _confirmPasswordController.text.trim().isNotEmpty;
-
-    isFormFilled.value = isFilled;
   }
 
   void fillFormForTesting() {
@@ -94,36 +94,32 @@ class _DeliverySignupScreenState extends State<DeliverySignupScreen> {
     setState(() => isLoading = true);
 
     try {
-      await AuthService().createAccount(
+      final response = await AuthService().createAccount(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
         name: _nameController.text.trim(),
-        profileType: UserType.delivery,
+        profileType: widget.profileType, // use dynamic profile type
         phone: _phoneController.text.trim(),
         address: _addressController.text.trim(),
       );
 
-      if (!mounted) return; // ✅ Check if widget is still in the tree
+      final user = response.data;
+      debugPrint('$user');
 
+      if (!mounted) return;
       context.flushBarSuccessMessage(message: "Account created successfully");
 
-      // Navigate safely
-      Future.microtask(() {
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) =>
-                  const DeliveryDashboardScreen(), // your home/dashboard screen
-            ),
-          ); // or Navigator.pushReplacement to another page
-        }
-      });
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const DeliveryDashboardScreen()),
+      );
+    } on AppException catch (e) {
+      if (mounted) context.flushBarErrorMessage(message: e.debugMessage);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Signup failed: $e')));
-      }
+      if (mounted) context.flushBarErrorMessage(message: e.toString());
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -173,7 +169,7 @@ class _DeliverySignupScreenState extends State<DeliverySignupScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color(0xff121721),
+      backgroundColor: const Color(0xff121721),
       body: Padding(
         padding: EdgeInsets.all(16.w),
         child: Form(
@@ -210,7 +206,7 @@ class _DeliverySignupScreenState extends State<DeliverySignupScreen> {
                     ),
                   ),
                   SizedBox(width: 6.w),
-                  Icon(Icons.waving_hand, color: Colors.amber),
+                  const Icon(Icons.waving_hand, color: Colors.amber),
                 ],
               ),
               SizedBox(height: 4.h),
@@ -224,6 +220,7 @@ class _DeliverySignupScreenState extends State<DeliverySignupScreen> {
               ),
               SizedBox(height: 42.h),
 
+              // Form Fields
               _buildTextField(
                 label: 'Name',
                 controller: _nameController,
@@ -295,6 +292,7 @@ class _DeliverySignupScreenState extends State<DeliverySignupScreen> {
               ),
               SizedBox(height: 36.h),
 
+              // Sign Up Button
               ValueListenableBuilder<bool>(
                 valueListenable: isFormFilled,
                 builder: (_, isFilled, __) {

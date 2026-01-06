@@ -11,6 +11,16 @@
 
 import 'package:flutter/widgets.dart';
 
+class $SecretsGen {
+  const $SecretsGen();
+
+  /// File path: secrets/key.json
+  String get key => 'secrets/key.json';
+
+  /// List of all assets
+  List<String> get values => [key];
+}
+
 class $AssetsIconsGen {
   const $AssetsIconsGen();
 
@@ -61,6 +71,7 @@ class Assets {
   static const $AssetsIconsGen icons = $AssetsIconsGen();
   static const $AssetsImagesGen images = $AssetsImagesGen();
   static const $AssetsJsonGen json = $AssetsJsonGen();
+  static const $SecretsGen secrets = $SecretsGen();
 
   /// List of all assets
   static List<String> get values => [aEnv];

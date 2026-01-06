@@ -1,6 +1,6 @@
 import 'package:firebase_google_apple_notif/app/utils/extensions/flush_bar_extension.dart';
+import 'package:firebase_google_apple_notif/services/manager_service.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_google_apple_notif/services/common/auth_service.dart';
 
 class AddDeliveryBoyScreen extends StatefulWidget {
   const AddDeliveryBoyScreen({super.key});
@@ -16,7 +16,7 @@ class _AddDeliveryBoyScreenState extends State<AddDeliveryBoyScreen> {
   );
   final List<FocusNode> _focusNodes = List.generate(5, (index) => FocusNode());
 
-  final AuthService _authService = AuthService();
+  final ManagerService _managerService = ManagerService();
 
   bool _isLoading = false;
   String? _errorMessage;
@@ -57,13 +57,7 @@ class _AddDeliveryBoyScreenState extends State<AddDeliveryBoyScreen> {
     }
 
     try {
-      final managerId = _authService.currentUserId;
-      if (managerId == null) throw Exception('Manager not logged in');
-
-      await _authService.linkDeliveryBoyToManager(
-        managerId: managerId,
-        deliveryCode: code,
-      );
+      await _managerService.linkDeliveryBoyByCode(code);
 
       if (mounted) {
         Navigator.pop(context);
@@ -88,7 +82,6 @@ class _AddDeliveryBoyScreenState extends State<AddDeliveryBoyScreen> {
     final primary = const Color(0xFF135BEC);
     final surfaceLight = Colors.white;
     final surfaceDark = const Color(0xFF1A2433);
-    // final backgroundLight = const Color(0xFFF6F6F8);
     final backgroundDark = const Color(0xFF101622);
 
     return Scaffold(
@@ -118,7 +111,7 @@ class _AddDeliveryBoyScreenState extends State<AddDeliveryBoyScreen> {
                         child: Text(
                           'Add Delivery Boy',
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
@@ -155,7 +148,7 @@ class _AddDeliveryBoyScreenState extends State<AddDeliveryBoyScreen> {
                           ],
                         ),
                         const SizedBox(height: 16),
-                        Text(
+                        const Text(
                           'Link New Account',
                           textAlign: TextAlign.center,
                           style: TextStyle(
